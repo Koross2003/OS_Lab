@@ -49,21 +49,22 @@ static void init_memmap(struct Page *base, size_t n) {
 // alloc_pages - call pmm->alloc_pages to allocate a continuous n*PAGESIZE
 // memory
 // 分配连续n个page
+// tag 分配page
 struct Page *alloc_pages(size_t n) {
     struct Page *page = NULL;
-    bool intr_flag;
+    bool intr_flag;//中断标志
 
     while (1) {
-        local_intr_save(intr_flag);
-        { page = pmm_manager->alloc_pages(n); }
-        local_intr_restore(intr_flag);
+        local_intr_save(intr_flag); // 保存当前中断状态并禁用中断,确保分配过程中不会被打断
+        { page = pmm_manager->alloc_pages(n); }// 分配n个页
+        local_intr_restore(intr_flag); // 恢复中断状态
         //如果有足够的物理页面，就不必换出其他页面
         //如果n>1, 说明希望分配多个连续的页面，但是我们换出页面的时候并不能换出连续的页面
- 		//swap_init_ok标志是否成功初始化了
+ 		//swap_init_ok标志是否成功初始化了,没有初始化做这个也没用了
         if (page != NULL || n > 1 || swap_init_ok == 0) break;
         // 否则就要换出页面
         extern struct mm_struct *check_mm_struct;
-        //调用页面置换的”换出页面“接口。这里必有n=1
+        //调用页面置换的"换出页面"接口,这里必有n=1
         swap_out(check_mm_struct, n, 0);
     }
     return page;
@@ -211,7 +212,7 @@ void pmm_init(void) {
 
 }
 
-// get_pte - 获取页表项并返回该页表项的内核虚拟地址，用于映射线性地址la
+// tag get_pte - 获取页表项并返回该页表项的内核虚拟地址，用于映射虚拟la
 //        - 如果包含该页表项的页表不存在，则为页表分配一个页面
 // 参数：
 //  pgdir：三级页表的物理地址(satp)
@@ -246,6 +247,8 @@ pte_t *get_pte(pde_t *pgdir, uintptr_t la, bool create) {
      *   PTE_U           0x004                   // page table/directory entry
      * flags bit : User can access
      */
+
+
     pde_t *pdep1 = &pgdir[PDX1(la)]; // 找到对应的Giga Page(三级页表上那个1G的大大页)
     if (!(*pdep1 & PTE_V)) { // 如果下一级页表不存在,那就给他分配一个页,创造新页表
         struct Page *page;
@@ -259,6 +262,8 @@ pte_t *get_pte(pde_t *pgdir, uintptr_t la, bool create) {
         memset(KADDR(pa), 0, PGSIZE);
         *pdep1 = pte_create(page2ppn(page), PTE_U | PTE_V);
     }
+
+
     pde_t *pdep0 = &((pde_t *)KADDR(PDE_ADDR(*pdep1)))[PDX0(la)]; // 进入到再下一级页表
     if (!(*pdep0 & PTE_V)) { // 和上面逻辑一致,如果不存在就再分配一个
     	struct Page *page;
@@ -400,12 +405,13 @@ static void check_pgdir(void) {
     // The memory starts at 2GB in RISC-V
     // so npage is always larger than KMEMSIZE / PGSIZE
     size_t nr_free_store;
-
+    //boot_pgdir是三级页表的虚拟地址
     nr_free_store=nr_free_pages();
 
     assert(npage <= KERNTOP / PGSIZE);
     assert(boot_pgdir != NULL && (uint32_t)PGOFF(boot_pgdir) == 0);
     assert(get_page(boot_pgdir, 0x0, NULL) == NULL);
+    //get_page()尝试找到虚拟内存0x0对应的页，现在当然是没有的，返回NULL
 
     struct Page *p1, *p2;
     p1 = alloc_page();
@@ -418,6 +424,7 @@ static void check_pgdir(void) {
     ptep = (pte_t *)KADDR(PDE_ADDR(boot_pgdir[0]));
     ptep = (pte_t *)KADDR(PDE_ADDR(ptep[0])) + 1;
     assert(get_pte(boot_pgdir, PGSIZE, 0) == ptep);
+    //get_pte查找某个虚拟地址对应的页表项，如果不存在这个页表项，会为它分配各级的页表
 
     p2 = alloc_page();
     assert(page_insert(boot_pgdir, p2, PGSIZE, PTE_U | PTE_W) == 0);

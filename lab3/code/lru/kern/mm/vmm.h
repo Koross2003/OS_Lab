@@ -19,9 +19,8 @@ volatile size_t time_now; // mark 计时，用于lru
 在链表里把它们按照区间的起始点进行排序。
 */
 /*
-// mark mm_struct是一个页表中vma集合
-每个页表（每个虚拟地址空间）可能包含多个vma_struct, 也就是多个访问权限可能不同的，不相交的连续地址区间。
-我们用mm_struct结构体把一个页表对应的信息组合起来
+// mark mm_struct是映射到同一个page的vma集合
+每个page可能包含多个vma_struct, 也就是多个访问权限可能不同的，不相交的连续地址区间。
 */
 
 
@@ -42,9 +41,9 @@ struct vma_struct {
 
 // 同一页表下的vma集合
 struct mm_struct {  
-    list_entry_t mmap_list;  //双向链表头，链接了所有属于同一页目录表的虚拟内存空间
-    struct vma_struct *mmap_cache;  //指向当前正在使用的虚拟内存空间
-    pde_t *pgdir; //指向的就是 mm_struct数据结构所维护的页表
+    list_entry_t mmap_list;  // 链接映射到这个page的所有vma
+    struct vma_struct *mmap_cache;  //指向当前正在使用的vma
+    pde_t *pgdir; //页目录的位置，在我们这个实验中实际上就是boot_pgdir
     int map_count; //记录 mmap_list 里面链接的 vma_struct 的个数
     void *sm_priv; //指向用来链接记录页访问情况的链表头
 };  

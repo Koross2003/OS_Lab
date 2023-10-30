@@ -2,7 +2,6 @@
 #include <swapfs.h>
 #include <swap_fifo.h>
 #include <swap_clock.h>
-#include <swap_lru.h>
 #include <stdio.h>
 #include <string.h>
 #include <memlayout.h>
@@ -32,19 +31,16 @@ static void check_swap(void);
 int
 swap_init(void)
 {
-     swapfs_init(); // 初始化硬盘交互接口
+     swapfs_init();
 
-     // 由于这个 IDE 是虚拟的，它最多只能存储 7 个页面以通过测试。
      // Since the IDE is faked, it can only store 7 pages at most to pass the test
      if (!(7 <= max_swap_offset &&
         max_swap_offset < MAX_SWAP_OFFSET_LIMIT)) {
         panic("bad max_swap_offset %08x.\n", max_swap_offset);
      }
 
-     // done 完成LRU 
-     //sm = &swap_manager_clock; // 初始化manager
+     sm = &swap_manager_clock;//use first in first out Page Replacement Algorithm
      //sm = &swap_manager_fifo;
-     sm = &swap_manager_lru;
      int r = sm->init();
      
      if (r == 0)
@@ -90,33 +86,33 @@ swap_out(struct mm_struct *mm, int n, int in_tick)
      for (i = 0; i != n; ++ i)
      {
           uintptr_t v;
+          //struct Page **ptr_page=NULL;
           struct Page *page;
-          int r = sm->swap_out_victim(mm, &page, in_tick); // 调用页面置换算法的接口
-          // r=0 表示找到了可以换出的界面
-          // 换出的界面在page里
+          // cprintf("i %d, SWAP: call swap_out_victim\n",i);
+          int r = sm->swap_out_victim(mm, &page, in_tick);
           if (r != 0) {
                     cprintf("i %d, swap_out: call swap_out_victim failed\n",i);
                   break;
           }          
+          //assert(!PageReserved(page));
+
+          //cprintf("SWAP: choose victim page 0x%08x\n", page);
           
-          // 可以获取物理页面对应的虚拟地址
           v=page->pra_vaddr; 
           pte_t *ptep = get_pte(mm->pgdir, v, 0);
           assert((*ptep & PTE_V) != 0);
 
-          if (swapfs_write( (page->pra_vaddr/PGSIZE+1)<<8, page) != 0) {//尝试把要换出的物理页面写到硬盘上的交换区，返回值不为0说明失败了
-               cprintf("SWAP: failed to save\n");
-               sm->map_swappable(mm, v, page, 0);
-               continue;
+          if (swapfs_write( (page->pra_vaddr/PGSIZE+1)<<8, page) != 0) {
+                    cprintf("SWAP: failed to save\n");
+                    sm->map_swappable(mm, v, page, 0);
+                    continue;
           }
-          else { // 成功换出
-               cprintf("swap_out: i %d, store page in vaddr 0x%x to disk swap entry %d\n", i, v, page->pra_vaddr/PGSIZE+1);
-               *ptep = (page->pra_vaddr/PGSIZE+1)<<8;
-               free_page(page);
+          else {
+                    cprintf("swap_out: i %d, store page in vaddr 0x%x to disk swap entry %d\n", i, v, page->pra_vaddr/PGSIZE+1);
+                    *ptep = (page->pra_vaddr/PGSIZE+1)<<8;
+                    free_page(page);
           }
-          //由于页表改变了，需要刷新TLB
-          //思考： swap_in()的时候插入新的页表项之后在哪里刷新了TLB?
-          // mark alloc_page -> 可能会调用swap_out
+          
           tlb_invalidate(mm->pgdir, v);
      }
      return i;
@@ -125,15 +121,14 @@ swap_out(struct mm_struct *mm, int n, int in_tick)
 int
 swap_in(struct mm_struct *mm, uintptr_t addr, struct Page **ptr_result)
 {
-     // 拿到一个物理页
-     // mark 若调用swap_out()会刷新TLB
-     struct Page *result = alloc_page(); // 这里alloc_page可能会调用swap_out()
+     struct Page *result = alloc_page();
      assert(result!=NULL);
 
-     pte_t *ptep = get_pte(mm->pgdir, addr, 0); // 找到或创建对应的页表项
+     pte_t *ptep = get_pte(mm->pgdir, addr, 0);
+     // cprintf("SWAP: load ptep %x swap entry %d to vaddr 0x%08x, page %x, No %d\n", ptep, (*ptep)>>8, addr, result, (result-pages));
     
      int r;
-     if ((r = swapfs_read((*ptep), result)) != 0) // 将数据从硬盘读入内存
+     if ((r = swapfs_read((*ptep), result)) != 0)
      {
         assert(r!=0);
      }

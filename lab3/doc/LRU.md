@@ -1,38 +1,35 @@
-#include "defs.h"
-#include "swap_lru.h"
-#include "list.h"
-#include "kdebug.h"
-#include "pmm.h"
-#include "vmm.h"
-#include <stdio.h>
+### LRU
+***
 
-list_entry_t pra_list_head, *curr_ptr;;
+#### 基本思路
 
+1. page结构体中增加一个变量`last_visited_time`，用于记录最近一次访问时间
+2. 添加一个global变量`time_now`，模拟当前时间
+3. 每次访问某个页时，`last_visited_time = ++time_now`
+4. 每次选取替换页时，遍历list，选取`last_visited_time`最小的页
 
-static int
-_lru_init_mm(struct mm_struct *mm)
-{     
-    list_init(&pra_list_head);
-    mm->sm_priv = &pra_list_head;
-    return 0;
-}
+***
 
+#### 仍然存在的问题
 
-static int
-_lru_map_swappable(struct mm_struct *mm, uintptr_t addr, struct Page *page, int swap_in)
-{
-    list_entry_t *head=(list_entry_t*) mm->sm_priv;
-    list_entry_t *entry=&(page->pra_page_link);
- 
-    assert(entry != NULL && head != NULL);
-    //record the page access situlation
+这个lru只能作为一个玩具，因为我没想到怎么实现在访问一个地址时自动更新对应物理page的last_visited_time。
 
-    //(1)link the most recent arrival page at the back of the pra_list_head qeueue.
-    list_add(head, entry); // 插到head的后面
-    return 0;
-}
+**作废的方案**
+一开始我以为每次访问都会调用find_vma，所以我当时选择在vma上添加last_visited_time，每次选择替换页时遍历每个物理页对应的vma，将最近的vma->last_visited_time作为page的last_visited_time。
+但是后来通过调试发现，除了前期check的部分，本次实验的中只有发生page_fault时调用do_page_fault函数，才会调用find_vma，因此这个方案作废了
 
+**新的方案**
+所以我只能手动模拟这个更新过程，在check_lru中，每访问一个地址后要手动调用reset_time(uint_t addresss)，这个函数接收一个虚拟地址，通过查找页表找到页表项进而找到对应的Page，然后更新Page的last_visited_time。
 
+***
+
+#### 具体的实现过程
+
+lru的init和map_swappable函数与fifo相同，不再赘述
+
+**lru_swap_out_victim()**
+
+```c
 static int
 _lru_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tick)
 {
@@ -40,19 +37,14 @@ _lru_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tick)
     assert(head != NULL);
     assert(in_tick==0);
 
-    /* 选择换出页 */
-    //(1)  从链表中移除 pra_list_head 前面的最早到达的页面
-    //(2)  将此页面的地址设置为 ptr_page 的地址
 
     struct Page *ptr_victim = NULL;
     list_entry_t *list_ptr_victim = NULL;
     size_t temp_time = time_now;
-
     curr_ptr = head;
-    //cprintf("\n\n\n wocao nima \n\n\n");
-    while((curr_ptr = list_next(curr_ptr)) != head) {
 
-        //cprintf("\n\n\n %d\n\n\n", temp_time);
+    //遍历list，选取last_visited_time最小的页
+    while((curr_ptr = list_next(curr_ptr)) != head) {
 
         struct Page *ptr = le2page(curr_ptr, pra_page_link);
         if(ptr->last_visited_time <= temp_time){
@@ -65,7 +57,25 @@ _lru_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tick)
     list_del(list_ptr_victim);
     return 0;
 }
+```
 
+
+**void reset_time()**
+
+```c
+void reset_time(uintptr_t addr){
+    
+    addr = ROUNDDOWN(addr, PGSIZE); 
+    pte_t* temp_ptep = NULL; 
+    temp_ptep = get_pte(boot_pgdir, addr, 1); // 获取页表项
+    struct Page* page = pte2page(*temp_ptep); // 找到对应物理页
+    page -> last_visited_time = ++time_now; // 更新last_visited_time
+}
+```
+
+**check_swap()**
+
+```c
 static int
 _lru_check_swap(void) {
     cprintf("write Virt Page c in lru_check_swap\n");
@@ -109,12 +119,12 @@ _lru_check_swap(void) {
     assert(pgfault_num==5);
 
     cprintf("write Virt Page c in lru_check_swap\n");
-    *(unsigned char *)0x3000 = 0x0c;
+    *(unsigned char *)0x3000 = 0x0c; // 这里lru已经把d踢出去了,如果是fifo就是踢a
     reset_time((unsigned char*)0x3000);
     assert(pgfault_num==6);
 
     cprintf("write Virt Page d in lru_check_swap\n");
-    *(unsigned char *)0x4000 = 0x0d;
+    *(unsigned char *)0x4000 = 0x0d;// 访问d没命中
     reset_time((unsigned char*)0x4000);
     assert(pgfault_num==7);
 
@@ -130,34 +140,6 @@ _lru_check_swap(void) {
     assert(pgfault_num==9);
     return 0;
 }
+```
 
-static int
-_lru_init(void)
-{
-    return 0;
-}
-
-static int
-_lru_set_unswappable(struct mm_struct *mm, uintptr_t addr)
-{
-    return 0;
-}
-
-static int
-_lru_tick_event(struct mm_struct *mm)
-{ return 0; }
-
-
-struct swap_manager swap_manager_lru =
-{
-     .name            = "lru swap manager",
-     .init            = &_lru_init,
-     .init_mm         = &_lru_init_mm,
-     .tick_event      = &_lru_tick_event,
-     .map_swappable   = &_lru_map_swappable,
-     .set_unswappable = &_lru_set_unswappable,
-     .swap_out_victim = &_lru_swap_out_victim,
-     .check_swap      = &_lru_check_swap,
-};
-
-
+设计了一些符合lru的替换策略,`make qemu`后没有触发断言，说明lru实现正确

@@ -89,7 +89,7 @@ extern size_t npage;
 extern const size_t nbase;
 extern uint_t va_pa_offset;
 
-// mark 对于page的一些操作
+// tag 对于page的一些操作
 /* 
 我们曾经在内存里分配了一堆连续的Page结构体，来管理物理页面。可以把它们看作一个结构体数组。
 pages指针是这个数组的起始地址，减一下，加上一个基准值nbase, 就可以得到正确的物理页号。

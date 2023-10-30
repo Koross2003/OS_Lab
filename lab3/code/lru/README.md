@@ -1,5 +1,6 @@
 ### LRU
 ***
+**这个版本由于修改了Page结构体，所以make grade无法通过**
 
 #### 基本思路
 
@@ -119,12 +120,12 @@ _lru_check_swap(void) {
     assert(pgfault_num==5);
 
     cprintf("write Virt Page c in lru_check_swap\n");
-    *(unsigned char *)0x3000 = 0x0c;
+    *(unsigned char *)0x3000 = 0x0c; // 这里lru已经把d踢出去了,如果是fifo就是踢a
     reset_time((unsigned char*)0x3000);
     assert(pgfault_num==6);
 
     cprintf("write Virt Page d in lru_check_swap\n");
-    *(unsigned char *)0x4000 = 0x0d;
+    *(unsigned char *)0x4000 = 0x0d;// 访问d没命中
     reset_time((unsigned char*)0x4000);
     assert(pgfault_num==7);
 
@@ -141,3 +142,5 @@ _lru_check_swap(void) {
     return 0;
 }
 ```
+
+设计了一些符合lru的替换策略,`make qemu`后没有触发断言，说明lru实现正确
