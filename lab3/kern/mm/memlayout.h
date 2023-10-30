@@ -70,6 +70,7 @@ struct Page {
     list_entry_t page_link;     // 页块链表指针
     list_entry_t pra_page_link; // 这个页的pra链表指针,pra_link用于维护所有可交换的页
     uintptr_t pra_vaddr;        // 用于页面替换算法（PRA）
+    uint_t last_visited_time;  // 记录最近一次访问时间
 };
 
 /* Flags describing the status of a page frame */

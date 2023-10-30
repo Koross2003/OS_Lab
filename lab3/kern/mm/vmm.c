@@ -91,10 +91,24 @@ vma_create(uintptr_t vm_start, uintptr_t vm_end, uint_t vm_flags) {
     return vma;
 }
 
+void reset_time(uintptr_t addr){
+    //cprintf("\n\n\nin %d\n\n\n",addr);
+    addr = ROUNDDOWN(addr, PGSIZE);
+    pte_t* temp_ptep = NULL;
+    temp_ptep = get_pte(boot_pgdir, addr, 1);
+    //cprintf("\n\n\nin %d\n\n\n", temp_ptep);
+    struct Page* page = pte2page(*temp_ptep);
+    //cprintf("\n\n\nin %d\n\n\n",addr);
+    page -> last_visited_time = ++time_now;
+}
+
 
 // find_vma - find a vma  (vma->vm_start <= addr <= vma_vm_end)
 struct vma_struct *
 find_vma(struct mm_struct *mm, uintptr_t addr) {
+
+    //cprintf("\n\n\ncheck vma 0x%x\n\n\n", addr);
+
     struct vma_struct *vma = NULL;
     if (mm != NULL) {
         vma = mm->mmap_cache;
@@ -114,6 +128,8 @@ find_vma(struct mm_struct *mm, uintptr_t addr) {
         }
         if (vma != NULL) {
             mm->mmap_cache = vma;
+            //reset_time(vma->vm_start);
+
             // //cprintf("\n\n\n whi \n\n\n ");
             // // mark 实现LRU,把这个vma所在的页的访问时间更新
             // list_entry_t *head = (list_entry_t*)mm->sm_priv;
@@ -358,6 +374,7 @@ do_pgfault(struct mm_struct *mm, uint_t error_code, uintptr_t addr) {
         goto failed;
     }
 
+
     /* IF (write an existed addr ) OR
      *    (write an non_existed addr && addr is writable) OR
      *    (read  an non_existed addr && addr is readable)
@@ -458,6 +475,8 @@ do_pgfault(struct mm_struct *mm, uint_t error_code, uintptr_t addr) {
             goto failed;
         }
    }
+
+    //reset_time(addr);
 
    ret = 0;
 failed:

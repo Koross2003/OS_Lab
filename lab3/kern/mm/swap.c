@@ -41,7 +41,7 @@ swap_init(void)
         panic("bad max_swap_offset %08x.\n", max_swap_offset);
      }
 
-     // todo 完成LRU
+     // done 完成LRU 
      //sm = &swap_manager_clock; // 初始化manager
      //sm = &swap_manager_fifo;
      sm = &swap_manager_lru;

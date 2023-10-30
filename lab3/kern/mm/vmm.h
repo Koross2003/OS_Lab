@@ -8,6 +8,7 @@
 
 // 预定义
 struct mm_struct;
+volatile size_t time_now; // mark 计时，用于lru
 
 // 虚拟连续内存区域(vma)，[vm_start, vm_end)， 
 // 如果一个地址属于一个vma，那么这个地址满足 vma.vm_start <= addr < vma.vm_end 
@@ -22,6 +23,8 @@ struct mm_struct;
 每个页表（每个虚拟地址空间）可能包含多个vma_struct, 也就是多个访问权限可能不同的，不相交的连续地址区间。
 我们用mm_struct结构体把一个页表对应的信息组合起来
 */
+
+
 struct vma_struct {  
     struct mm_struct *vm_mm;  //指向一个比 vma_struct 更高的抽象层次的数据结构 mm_struct 
     uintptr_t vm_start;      //vma 的开始地址
@@ -49,6 +52,7 @@ struct mm_struct {
 struct vma_struct *find_vma(struct mm_struct *mm, uintptr_t addr);
 struct vma_struct *vma_create(uintptr_t vm_start, uintptr_t vm_end, uint_t vm_flags);
 void insert_vma_struct(struct mm_struct *mm, struct vma_struct *vma);
+void reset_time(uintptr_t addr);
 
 struct mm_struct *mm_create(void);
 void mm_destroy(struct mm_struct *mm);

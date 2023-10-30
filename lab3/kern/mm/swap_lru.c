@@ -6,116 +6,29 @@
 #include "vmm.h"
 #include <stdio.h>
 
-struct pra_list_manager{
-    list_entry_t free_list;
-    int32_t free_count;
-    list_entry_t busy_list;
-    uint32_t busy_count;
-}_pra_list_manager;
-
-#define LEN 10
-
-static void
-init_pra_list_manager(struct pra_list_manager *p)
-{
-     p->busy_count = p->free_count = 0;
-     list_init(&p->free_list);
-     list_init(&p->busy_list);
-}
-
+list_entry_t pra_list_head, *curr_ptr;;
 
 
 static int
 _lru_init_mm(struct mm_struct *mm)
 {     
-    init_pra_list_manager(&_pra_list_manager);
-     mm->sm_priv = &_pra_list_manager;
-
-     return 0;
-}
-
-// _lru_swap_cleanup函数用于清理过期页面，返回最早的未被访问的页面
-static list_entry_t*
-_lru_swap_cleanup(struct mm_struct *mm, int32_t cleanup_len)
-{
-
-    // 初始化值
-    struct pra_list_manager* p = (struct pra_list_manager*)mm->sm_priv;
-    list_entry_t *free_head = &p->free_list;
-    list_entry_t *busy_head = &p->busy_list;
-
-    // 计算需要清理的页面数量
-    int32_t free_i = cleanup_len < p->free_count ? cleanup_len : p->free_count;
-    int32_t busy_i = cleanup_len < p->busy_count ? cleanup_len : p->busy_count;
-
-    list_entry_t *found = NULL;
-    int32_t i,delt;
-
-    // 清理busy_list中的过期页面
-
-    list_entry_t *le = busy_head->next;
-    for(i = 0, delt = 0 ; i < busy_i ; i ++,le = le->next)
-    {
-        // 获取页面
-        struct Page *page = le2page(le, pra_page_link);
-
-
-        if(page->visited == 0)
-        {
-            // 如果页面未被访问过，则将其从busy_list中删除，添加到free_list中
-            list_del(le);
-            list_add_before(free_head, le);
-            delt ++;
-        }
-    }
-    p->free_count += delt;
-    p->busy_count -= delt;
-
-    // 清理free_list中的过期页面
-    le = free_head->next;
-    for(i = 0, delt = 0 ; i < free_i ; i ++,le = le->next)
-    {
-        // 获取页面
-        struct Page *page = le2page(le, pra_page_link);
-
-        // 获取页面对应的页表项
-        if(page->visited == 1)
-        {
-            // 如果页面被访问过，则将其从free_list中删除，添加到busy_list中
-            list_del(le);
-            list_add_before(busy_head, le);
-            delt ++;
-        }else{
-            // 如果页面未被访问过，则将其作为最早未被访问的页面返回
-            if(found == NULL)
-                found = le; 
-        }
-    }
-    p->free_count -= delt;
-    p->busy_count += delt;
-
-    return found;
-    
+    list_init(&pra_list_head);
+    mm->sm_priv = &pra_list_head;
+    return 0;
 }
 
 
 static int
 _lru_map_swappable(struct mm_struct *mm, uintptr_t addr, struct Page *page, int swap_in)
 {
-    // 获取进程的页面替换算法管理器
-    struct pra_list_manager* p = (struct pra_list_manager*)mm->sm_priv;
-    // 获取链表头
-    list_entry_t *free_head = &p->free_list;
-    list_entry_t *busy_head = &p->busy_list;
-    // 获取当前页面的链表节点
-    list_entry_t *entry = &(page->pra_page_link);
-    // 清理过期页面
-    _lru_swap_cleanup(mm, LEN);
-    // 将当前页面添加到链表头之前
-    page->visited = 0;
-    list_add_before(free_head, entry);
-    // 页面计数加1
-    p->free_count ++;
+    list_entry_t *head=(list_entry_t*) mm->sm_priv;
+    list_entry_t *entry=&(page->pra_page_link);
+ 
+    assert(entry != NULL && head != NULL);
+    //record the page access situlation
+
+    //(1)link the most recent arrival page at the back of the pra_list_head qeueue.
+    list_add(head, entry); // 插到head的后面
     return 0;
 }
 
@@ -123,37 +36,33 @@ _lru_map_swappable(struct mm_struct *mm, uintptr_t addr, struct Page *page, int 
 static int
 _lru_swap_out_victim(struct mm_struct *mm, struct Page ** ptr_page, int in_tick)
 {
-    struct pra_list_manager* p = (struct pra_list_manager*)mm->sm_priv;
-    list_entry_t *free_head = &p->free_list;
-    list_entry_t *busy_head = &p->busy_list;
-    list_entry_t *found;
+    list_entry_t *head=(list_entry_t*) mm->sm_priv;
+    assert(head != NULL);
+    assert(in_tick==0);
 
-    assert(in_tick == 0);
-    assert( free_head != NULL && busy_head != NULL);
+    /* 选择换出页 */
+    //(1)  从链表中移除 pra_list_head 前面的最早到达的页面
+    //(2)  将此页面的地址设置为 ptr_page 的地址
 
-    found = _lru_swap_cleanup(mm, LEN);
+    struct Page *ptr_victim = NULL;
+    list_entry_t *list_ptr_victim = NULL;
+    size_t temp_time = time_now;
 
-    //point the first one
-    if(found == NULL) 
-    {
-        if(p->free_count != 0)
-        {
-            found = free_head->next;
-            p->free_count --;
+    curr_ptr = head;
+    //cprintf("\n\n\n wocao nima \n\n\n");
+    while((curr_ptr = list_next(curr_ptr)) != head) {
+
+        //cprintf("\n\n\n %d\n\n\n", temp_time);
+
+        struct Page *ptr = le2page(curr_ptr, pra_page_link);
+        if(ptr->last_visited_time <= temp_time){
+            temp_time = ptr->last_visited_time;
+            ptr_victim = ptr;
+            list_ptr_victim = curr_ptr;
         }
-        else{
-           if(p->busy_count == 0) return false;
-           found = busy_head->next; 
-           p->busy_count --;
-        }
-    }else{
-        p->free_count --;
     }
-    
-    list_del(found); 
-    *ptr_page = le2page(found, pra_page_link);
-
-
+    *ptr_page = ptr_victim;
+    list_del(list_ptr_victim);
     return 0;
 }
 
@@ -161,41 +70,64 @@ static int
 _lru_check_swap(void) {
     cprintf("write Virt Page c in lru_check_swap\n");
     *(unsigned char *)0x3000 = 0x0c;
+    reset_time((unsigned char*)0x3000);
     assert(pgfault_num==4);
+
     cprintf("write Virt Page a in lru_check_swap\n");
     *(unsigned char *)0x1000 = 0x0a;
+    reset_time((unsigned char*)0x1000);
     assert(pgfault_num==4);
+
     cprintf("write Virt Page d in lru_check_swap\n");
     *(unsigned char *)0x4000 = 0x0d;
+    reset_time((unsigned char*)0x4000);
     assert(pgfault_num==4);
+
     cprintf("write Virt Page b in lru_check_swap\n");
     *(unsigned char *)0x2000 = 0x0b;
+    reset_time((unsigned char*)0x2000);
     assert(pgfault_num==4);
+
     cprintf("write Virt Page e in lru_check_swap\n");
     *(unsigned char *)0x5000 = 0x0e;
+    reset_time((unsigned char*)0x5000);
     assert(pgfault_num==5);
+
     cprintf("write Virt Page b in lru_check_swap\n");
     *(unsigned char *)0x2000 = 0x0b;
+    reset_time((unsigned char*)0x2000);
     assert(pgfault_num==5);
+
     cprintf("write Virt Page a in lru_check_swap\n");
     *(unsigned char *)0x1000 = 0x0a;
-    assert(pgfault_num==6);
+    reset_time((unsigned char*)0x1000);
+    assert(pgfault_num==5);
+
     cprintf("write Virt Page b in lru_check_swap\n");
     *(unsigned char *)0x2000 = 0x0b;
-    assert(pgfault_num==7);
+    reset_time((unsigned char*)0x2000);
+    assert(pgfault_num==5);
+
     cprintf("write Virt Page c in lru_check_swap\n");
     *(unsigned char *)0x3000 = 0x0c;
-    assert(pgfault_num==8);
+    reset_time((unsigned char*)0x3000);
+    assert(pgfault_num==6);
+
     cprintf("write Virt Page d in lru_check_swap\n");
     *(unsigned char *)0x4000 = 0x0d;
-    assert(pgfault_num==9);
+    reset_time((unsigned char*)0x4000);
+    assert(pgfault_num==7);
+
     cprintf("write Virt Page e in lru_check_swap\n");
     *(unsigned char *)0x5000 = 0x0e;
-    assert(pgfault_num==10);
+    reset_time((unsigned char*)0x5000);
+    assert(pgfault_num==8);
+
     cprintf("write Virt Page a in lru_check_swap\n");
     assert(*(unsigned char *)0x1000 == 0x0a);
     *(unsigned char *)0x1000 = 0x0a;
-    assert(pgfault_num==11);
+    reset_time((unsigned char*)0x1000);
+    assert(pgfault_num==9);
     return 0;
 }
 
