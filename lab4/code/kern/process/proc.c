@@ -84,6 +84,23 @@ proc_list实际上没啥用,他唯一的作用就是get_pid中.创建一个进�
 我猜测这可能是历史遗留问题
 */
 
+// mark 如何禁用和启用中断
+/*
+sstatus 寄存器中的 SIE 位用于控制是否允许中断发生。当 SIE 位为 1 时，允许中断发生；当 SIE 位为 0 时，禁用中断。
+
+### 禁用中断
+禁用中断经历了以下几个步骤：
+
+1. 检查是否禁止了中断，如果没禁止则禁止中断并返回1，如果已经禁止了则返回0
+2. 如果需要禁用中断，调用`intr_disable`函数，将sstatus 寄存器的`SSTATUS_SIE`位置0，禁用中断
+
+### 启用中断
+启用中断经历了以下几个步骤：
+1. 根据flag保存的状态，判断是否需要启用中断。如果flag为0，说明原本就是禁用的，恢复之后也应该是禁用，所以不需要启用；如果flag为1，说明原本是启用的，则需要启用中断。
+2. 如果需要启用中断，调用`intr_enable`函数，将sstatus 寄存器的`SSTATUS_SIE`位置1，启用中断。
+
+*/
+
 // 所有进程控制块的哈希表，proc_struct中的成员变量hash_link将基于pid链接入这个哈希表中
 static list_entry_t hash_list[HASH_LIST_SIZE];
 
@@ -100,7 +117,7 @@ void kernel_thread_entry(void);
 void forkrets(struct trapframe *tf);
 void switch_to(struct context *from, struct context *to);
 
-// alloc_proc - alloc a proc_struct and init all fields of proc_struct
+// alloc_proc - 分配一个 proc_struct 并初始化 proc_struct 的所有字段
 static struct proc_struct *
 alloc_proc(void) {
     struct proc_struct *proc = kmalloc(sizeof(struct proc_struct));
@@ -240,6 +257,9 @@ find_proc(int pid) {
 // kernel_thread - create a kernel thread using "fn" function
 // NOTE: the contents of temp trapframe tf will be copied to 
 //       proc->tf in do_fork-->copy_thread function
+
+// kernel_thread - 创建一个内核线程
+// 注意：temp trapframe tf 的内容将在 do_fork --> copy_thread 函数中被复制到 proc->tf 中
 int
 kernel_thread(int (*fn)(void *), void *arg, uint32_t clone_flags) {
     struct trapframe tf; // 上下文
@@ -260,11 +280,11 @@ kernel_thread(int (*fn)(void *), void *arg, uint32_t clone_flags) {
     tf.epc = (uintptr_t)kernel_thread_entry;
 
     // 使用 do_fork 创建一个新进程（内核线程），这样才真正用设置的tf创建新进程。
-    // mark 注意这里的参数,0表示esp,由于我们本次实验中创建的都是内核线程,所以不需要
+    // mark 注意这里的参数,0的位置传入的应该是esp,由于我们本次实验中创建的都是内核线程,所以不需要
     return do_fork(clone_flags | CLONE_VM, 0, &tf);
 }
 
-// setup_kstack - alloc pages with size KSTACKPAGE as process kernel stack
+// setup_kstack - 为进程内核栈分配大小为 KSTACKPAGE 的页面
 static int
 setup_kstack(struct proc_struct *proc) {
     struct Page *page = alloc_pages(KSTACKPAGE);
@@ -275,7 +295,7 @@ setup_kstack(struct proc_struct *proc) {
     return -E_NO_MEM;
 }
 
-// put_kstack - free the memory space of process kernel stack
+// put_kstack - 释放进程内核栈所占空间
 static void
 put_kstack(struct proc_struct *proc) {
     free_pages(kva2page((void *)(proc->kstack)), KSTACKPAGE);
