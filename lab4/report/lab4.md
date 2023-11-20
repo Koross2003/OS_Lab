@@ -44,6 +44,9 @@ alloc_proc(void) {
 
 请说明proc_struct中`struct context context`和`struct trapframe *tf`成员变量含义和在本实验中的作用是啥？
 
+- context是上下文，用于保存进程切换时父进程的一些寄存器值
+- tf是中断帧的指针，总是指向内核栈的某个位置：当进程从用户态转移到内核态时，中断帧tf记录了进程在被中断前的状态,比如部分寄存器的值。当内核需要跳回用户态时，需要调整中断帧以恢复让进程继续执行的各寄存器值。
+
 实际上这个实验中,context并不是真正用于恢复上下文的成员变量，trapframe才是创建(复制)一个进程,他的上下文恢复实际上是这样操作的
 1. context中的ra指向forkret,然后switch_to会把原来的context保存到源进程的context中,加载新进程的context
 2. switch_to结束后返回,返回地址是ra指向的forkret,这里问题就来了,实际上forkret不需要参数,他做的就是调用forkrets,传入当前进程(current)的trapframe
